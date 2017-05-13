@@ -1,9 +1,8 @@
-console.log("usage: node j2e.js <user> <pass>")
+console.log("usage: node mondego.js <user> <pass>")
 
-var http = require('https');
+const http = require('https');
 const url = require('url');
-const util = require('util');
-var elasticsearch = require('elasticsearch');
+const elasticsearch = require('elasticsearch');
 
 //var parser = new xml2js.Parser();
 var elclient = new elasticsearch.Client({
