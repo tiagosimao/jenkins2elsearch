@@ -41,7 +41,7 @@ function readJenkinsQueue() {
     let call;
     if(call=jenkinsQueue.pop()) {
         call(()=>{
-            jenkinsWait=Math.min(10000,jenkinsWait+1000);
+            jenkinsWait=Math.min(10000,jenkinsWait+100);
             setTimeout(readJenkinsQueue,jenkinsWait);
         },()=>{
             jenkinsWait=Math.max(jenkinsWait-100,0);
