@@ -121,7 +121,7 @@ function syncPromotion(promotion,job) {
                 "url": got.url,
                 "user": findCulprit(got)
             };
-            write(config.elasticsearch.index, "release", promotionData.id + "", promotionData);
+            write(config.elasticsearch.index, "release", job.name + "-" + promotionData.id, promotionData);
         }
     );
 }
@@ -165,7 +165,7 @@ function syncBuilds(job) {
                     "url": jenkinsBuildData.url,
                     "user": findCulprit(jenkinsBuildData)
                 };
-                write(config.elasticsearch.index, "build", buildData.id, buildData);
+                write(config.elasticsearch.index, "build", job.name + "-" + buildData.id, buildData);
         });
     }
 }
