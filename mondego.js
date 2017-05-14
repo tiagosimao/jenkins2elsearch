@@ -56,6 +56,8 @@ function sync() {
     }
 }
 
+
+// JENKINS
 function syncBuilds(job,onSync) {
     for (var i in job.builds) {
         var build = job.builds[i];
@@ -78,18 +80,16 @@ function syncBuilds(job,onSync) {
                     "url": jenkinsBuildData.url,
                     "user": culprit
                 };
-                write(config.elasticsearch.buildindex, job.name, buildData.id + "", buildData)
+                write(config.elasticsearch.ciindex, job.name, buildData.id + "", buildData)
         });
     }
     onSync();
 }
 
-
 function syncJenkinsJobs(jobs) {
     if (jobs) {
         var job = jobs.shift();
         if (job) {
-            //setTimestampMapping(config.elasticsearch.buildindex, job.name, "timestamp");
             var jobUrl = url.parse(job.url);
             console.log("Found job " + job.name + " at " + job.url);
             getJson(jobUrl.protocol, jobUrl.host, jobUrl.path + "api/json",
@@ -110,23 +110,81 @@ function syncJenkinsJobs(jobs) {
     }
 }
 
-function syncGitlabProject(project) {
 
-}
-
-function syncGitlabProjects() {
-    var options = {
-        url: config.gitlab.url + "/projects/",
+// GITLAB
+function gitlabGet(apiPath, reader, pageIndex, pageSize) {
+    apiPath = apiPath.replace(/^\/|\/$/,'');
+    let path = url.parse(config.gitlab.url+apiPath);
+    if(pageIndex || pageIndex==0) {
+        let search = path.search;
+        if(search){
+            search+="&";
+        } else {
+            search="?";
+        }
+        search+="page=" + pageIndex
+        if(!pageSize){
+            pageSize = 20;
+        }
+        search+="per_page=" + pageSize;
+        path.search = search;
+    }
+    let options = {
+        url: url.format(path),
         headers: {
             'PRIVATE-TOKEN': config.gitlab.private_token
         }
     };
-    request(options, function(error, response, body){
-        if(response.statusCode<300){
+    console.log("get " + options.url);
+    request(options, function (error, response, body) {
+        if (response.statusCode < 300) {
             let got = JSON.parse(body);
-            syncGitlabProject(got);
+            if(got && Object.keys(got).length > 0) {
+                reader(got);
+                let nextPageIndex = response.headers["x-next-page"];
+                if (!nextPageIndex) {
+                    nextPageIndex = pageIndex ? (pageIndex + 1) : 1;
+                }
+                let suggestedPageSize = response.headers["x-per-page"];
+                if (suggestedPageSize) {
+                    pageSize = suggestedPageSize;
+                }
+                gitlabGet(apiPath, reader, nextPageIndex, pageSize);
+            }
         } else {
-            console.log("Error getting projects from Gitlab: " + response.statusCode)
+            console.log("Error getting data from Gitlab: " + options.url  + " (" + response.statusCode + ")")
+        }
+    });
+}
+
+function syncGitlabCommits(project) {
+    gitlabGet("/projects/" + project.id + "/repository/commits",commits=>{
+        for(let commit of commits) {
+            let data = {
+                "uid": commit.id,
+                "name": project.name,
+                "user": commit.author_email,
+                "description": commit.title,
+                "created_timestamp": commit.created_at
+            };
+            write(config.elasticsearch.vcsindex,"commit",commit.uid,data);
+        }
+    }, 0);
+}
+
+function syncGitlabProjects() {
+    gitlabGet("/projects/",projects=>{
+        for(let project of projects) {
+            let data = {
+                "id": project.id,
+                "name": project.name,
+                "description": project.description,
+                "archived": project.archived,
+                "created_timestamp": project.created_at,
+                "activity_timestamp": project.last_activity_at
+            };
+            write(config.elasticsearch.vcsindex,"project",project.id,data);
+            syncGitlabCommits(project);
         }
     });
 }
@@ -134,7 +192,6 @@ function syncGitlabProjects() {
 // WRITE DATA
 
 function write(index, type, id, data) {
-    console.log("trying to write");
     elclient.index({
         index: index,
         type: type,
@@ -142,16 +199,6 @@ function write(index, type, id, data) {
         body: data
     });
 }
-
-/*function setTimestampMapping(index,type,property){
-    var body = {};
-    body[type]= {
-        properties:{}
-    };
-    body[type].properties[property]={"type" : "date"};
-    elclient.indices.putMapping({index:index, type:type, body:body});
-}*/
-
 
 // SETUP MODULES
 
@@ -189,6 +236,12 @@ function setupJenkins() {
 }
 
 function setupGitlab() {
+    if(!config.gitlab.url) {
+        console.log("No URL set for GitLab");
+    }
+    if(!config.gitlab.url.endsWith("/")){
+        config.gitlab.url += "/";
+    }
     request.post(
         config.gitlab.url + "/session?login="+config.gitlab.username+"&password=" + config.gitlab.password,
         function (error, response, body) {
