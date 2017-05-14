@@ -9,3 +9,4 @@ build/*
 */target/*
 target/
 node_modules
+config.json

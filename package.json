@@ -10,7 +10,9 @@
     "type": "git",
     "url": "git://github.com/username/repository.git"
   },
-  "dependencies" : {
-      "elasticsearch" : "13.0.1 "
+  "dependencies": {
+      "elasticsearch": "13.0.1 ",
+      "request": "2.81.0",
+      "async": "2.4.0"
     }
 }
