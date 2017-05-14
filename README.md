@@ -1,5 +1,5 @@
 # mondego
-Jenkins to Elasticsearch ETL
+Development support systems to Elasticsearch data migration
 
 ## How to run
 * Checkout this repo
@@ -12,8 +12,8 @@ Jenkins to Elasticsearch ETL
 {
   "elasticsearch": {
     "url": "https://somewhere",
-    "buildindex": "build",
-    "projectindex": "project"
+    "ciindex": "build",
+    "vcsindex": "repo"
   },
   "jenkins": {
     "url": "https://somewhere/jenkins",
