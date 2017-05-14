@@ -36,6 +36,8 @@ function sync() {
 // JENKINS
 let jenkinsQueue = [];
 let jenkinsWait = 100;
+let jenkinsMaxWait = 60000;
+let jenkinsCurrentWait = 0;
 
 function readJenkinsQueue() {
     let call;
@@ -47,7 +49,8 @@ function readJenkinsQueue() {
             jenkinsWait=Math.max(jenkinsWait-100,0);
             setTimeout(readJenkinsQueue,jenkinsWait);
         });
-    } else {
+    } else if(jenkinsCurrentWait<jenkinsMaxWait) {
+        jenkinsCurrentWait+=100;
         setTimeout(readJenkinsQueue,100); // poll interval
     }
 }
@@ -79,6 +82,29 @@ function jenkinsGet(path, reader) {
     });
 }
 
+function findCulprit(data) {
+    if(!data){
+        return undefined;
+    }
+    if(data.userName){
+        return data.userName;
+    } else if(data.fullName) {
+        return data.fullName;
+    } else {
+        Object.keys(data).forEach(function(k, i) {
+            if(data == data[k] || !data.hasOwnProperty(k)) {
+                return;
+            }  else {
+                let found = findCulprit(data[k]);
+                if (found) {
+                    return found;
+                }
+            }
+        });
+    }
+    return undefined;
+}
+
 function syncPromotion(promotion,job) {
     var promotionUrl = url.parse(promotion.url);
     jenkinsGet(promotionUrl.path + "api/json",
@@ -92,7 +118,8 @@ function syncPromotion(promotion,job) {
                 "created_timestamp": new Date(got.timestamp).toISOString(),
                 "status": got.result,
                 "description": got.description,
-                "url": got.url
+                "url": got.url,
+                "user": findCulprit(got)
             };
             write(config.elasticsearch.index, "release", promotionData.id + "", promotionData);
         }
@@ -127,10 +154,6 @@ function syncBuilds(job) {
         var buildUrl = url.parse(build.url);
         jenkinsGet(buildUrl.path + "api/json",
             function (jenkinsBuildData) {
-                let culprit;
-                if(jenkinsBuildData.culprits && jenkinsBuildData.culprits.length > 0){
-                    culprit = jenkinsBuildData.culprits[0].fullName;
-                }
                 let buildData = {
                     "id": jenkinsBuildData.id,
                     "repoName": job.name,
@@ -140,7 +163,7 @@ function syncBuilds(job) {
                     "status": jenkinsBuildData.result,
                     "description": jenkinsBuildData.description,
                     "url": jenkinsBuildData.url,
-                    "user": culprit
+                    "user": findCulprit(jenkinsBuildData)
                 };
                 write(config.elasticsearch.index, "build", buildData.id, buildData);
         });
