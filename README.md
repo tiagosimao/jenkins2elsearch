@@ -12,8 +12,7 @@ Development support systems to Elasticsearch data migration
 {
   "elasticsearch": {
     "url": "https://somewhere",
-    "ciindex": "build",
-    "vcsindex": "repo"
+    "index": "devopt"
   },
   "jenkins": {
     "url": "https://bigus_dicus:hunter2@somewhere/jenkins"
