@@ -16,9 +16,7 @@ Development support systems to Elasticsearch data migration
     "vcsindex": "repo"
   },
   "jenkins": {
-    "url": "https://somewhere/jenkins",
-    "username": "bigus_dicus",
-    "password": "hunter2"
+    "url": "https://bigus_dicus:hunter2@somewhere/jenkins"
   },
   "gitlab": {
     "url": "https://somewhere/api/v3",
