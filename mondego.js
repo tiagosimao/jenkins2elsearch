@@ -35,51 +35,59 @@ function sync() {
 
 // JENKINS
 let jenkinsQueue = [];
-let jenkinsErrored = [];
+let jenkinsWait = 100;
 
 function readJenkinsQueue() {
     let call;
-    let timeout = 100;
     if(call=jenkinsQueue.pop()) {
-        call(call);
+        call(()=>{
+            jenkinsWait=Math.min(10000,jenkinsWait+1000);
+            setTimeout(readJenkinsQueue,jenkinsWait);
+        },()=>{
+            jenkinsWait=Math.max(jenkinsWait-100,0);
+            setTimeout(readJenkinsQueue,jenkinsWait);
+        });
+    } else {
+        setTimeout(readJenkinsQueue,100); // poll interval
     }
-    if(jenkinsErrored.length>0){
-        timeout=Math.min(100,Math.min(10000,jenkinsErrored.length*100));
-        jenkinsQueue.push(jenkinsErrored.pop());
-    }
-    setTimeout(readJenkinsQueue,timeout);
 }
 
 function jenkinsGet(path, reader) {
-    jenkinsQueue.push((myself)=>{
+    jenkinsQueue.push((retry,next)=>{
         let callUri = url.resolve(config.jenkins.url,path);
         console.info("Calling Jenkins: " + path);
         request(url.format(callUri), (error,response,body)=>{
-            if(error){
-                console.error("Error getting data from Jenkins: " + callUri.path);
-                console.error(error);
-                if(!response||response.statusCode>499){
-                    jenkinsErrored.push(myself);
+            try{
+                if(error) {
+                    console.error("Error getting data from Jenkins: " + callUri.path);
+                    console.error(error);
+                } else if(response && response.statusCode < 300) {
+                    let data = JSON.parse(body);
+                    reader(data);
+                } else {
+                    let cause = response ? response.statusCode : "unknown cause";
+                    console.error("Error getting data from Jenkins: " + cause + " at " + path);
                 }
-            } else if(response && response.statusCode < 300) {
-                let data = JSON.parse(body);
-                reader(data);
-                return;
-            } else {
-                let cause = response ? response.statusCode : "unknown cause";
-                console.error("Error getting data from Jenkins: " + cause + " at " + path);
+            } finally {
+                if(error || response && response.statusCode>499){
+                    retry();
+                } else {
+                    next();
+                }
             }
         });
     });
 }
 
-function syncPromotion(promotion,process,job,buildId) {
+function syncPromotion(promotion,job) {
     var promotionUrl = url.parse(promotion.url);
     jenkinsGet(promotionUrl.path + "api/json",
         got=>{
+            let buildNumber = got.target ? got.target.number : undefined;
             let promotionData = {
                 "id": got.id,
                 "repoName": job.name,
+                "buildNumber": buildNumber,
                 "duration": got.duration,
                 "created_timestamp": new Date(got.timestamp).toISOString(),
                 "status": got.result,
@@ -91,29 +99,29 @@ function syncPromotion(promotion,process,job,buildId) {
     );
 }
 
-function syncProcess(process,job,buildId) {
+function syncProcess(process,job) {
     var processUrl = url.parse(process.url);
     jenkinsGet(processUrl.path + "api/json",
         got=>{
             for(let promotion of got.builds){
-                syncPromotion(promotion,process,job,buildId);
+                syncPromotion(promotion,job);
             }
         }
     );
 }
 
-function syncPromotions(job,buildId) {
+function syncPromotions(job) {
     var jobUrl = url.parse(job.url);
     jenkinsGet(jobUrl.path + "promotion/api/json",
         got=>{
             for(let process of got.processes){
-                syncProcess(process,job,buildId);
+                syncProcess(process,job);
             }
         }
     );
 }
 
-function syncBuilds(job,onSync) {
+function syncBuilds(job) {
     for (var i in job.builds) {
         var build = job.builds[i];
         var buildUrl = url.parse(build.url);
@@ -126,6 +134,7 @@ function syncBuilds(job,onSync) {
                 let buildData = {
                     "id": jenkinsBuildData.id,
                     "repoName": job.name,
+                    "buildNumber": jenkinsBuildData.number,
                     "duration": jenkinsBuildData.duration,
                     "created_timestamp": new Date(jenkinsBuildData.timestamp).toISOString(),
                     "status": jenkinsBuildData.result,
@@ -134,30 +143,22 @@ function syncBuilds(job,onSync) {
                     "user": culprit
                 };
                 write(config.elasticsearch.index, "build", buildData.id, buildData);
-                syncPromotions(job,jenkinsBuildData.id);
         });
     }
-    onSync();
 }
 
-function syncJenkinsJobs(jobs) {
-    if (jobs) {
-        var job = jobs.shift();
-        if (job) {
-            var jobUrl = url.parse(job.url);
-            jenkinsGet(jobUrl.path + "api/json",
-                function (data) {
-                    syncBuilds(data, function () {
-                        syncJenkinsJobs(jobs);
+function syncJenkinsJobs() {
+    jenkinsGet("api/json",
+        (rootData) => {
+            for(let jobSummary of rootData.jobs){
+                var jobUrl = url.parse(jobSummary.url);
+                jenkinsGet(jobUrl.path + "api/json",
+                    (job) => {
+                        syncBuilds(job);
+                        syncPromotions(job);
                     });
-                });
-        }
-    } else {
-        jenkinsGet("api/json",
-            function (data) {
-                syncJenkinsJobs(data.jobs);
-            });
-    }
+            }
+        });
 }
 
 
@@ -245,6 +246,7 @@ function syncGitlabProjects() {
 // WRITE DATA
 
 function write(index, type, id, data) {
+    console.info("Writing: " + index + "/" + type + "/" + id);
     elclient.index({
         index: index,
         type: type,
@@ -257,7 +259,7 @@ function write(index, type, id, data) {
 
 function setup() {
     setupJenkins();
-    setupGitlab();
+    //setupGitlab();
     setupElasticsearch();
 }
 
