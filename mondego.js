@@ -170,7 +170,7 @@ function syncBuilds(job) {
         jenkinsGet(buildUrl.path + "api/json",
             function (jenkinsBuildData) {
                 let buildData = {
-                    "id": jenkinsBuildData.id,
+                    "uid": jenkinsBuildData.id,
                     "repoName": job.name,
                     "repoUrl": findRepoUrlInBuild(jenkinsBuildData),
                     "buildNumber": jenkinsBuildData.number,
