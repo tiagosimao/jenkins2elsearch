@@ -4,6 +4,8 @@ const url = require('url');
 const request = require('request');
 const elasticsearch = require('elasticsearch');
 const events = require('events');
+let path = require("object-path");
+
 const bus = new events.EventEmitter();
 
 const moduleReadyEvent = "moduleReadyEvent";
@@ -83,45 +85,58 @@ function jenkinsGet(path, reader) {
 }
 
 function findCulprit(data) {
-    if(!data){
-        return undefined;
-    }
-    if(data.userName){
-        return data.userName;
-    } else if(data.fullName) {
-        return data.fullName;
-    } else {
-        Object.keys(data).forEach(function(k, i) {
-            if(data == data[k] || !data.hasOwnProperty(k)) {
-                return;
-            }  else {
-                let found = findCulprit(data[k]);
-                if (found) {
-                    return found;
-                }
-            }
-        });
-    }
-    return undefined;
+    return path.coalesce(data,[
+        ["culprits",0,"fullName"],
+        ["actions", 0, "causes", 0, "userName"],
+        ["actions", 1, "causes", 0, "userName"],
+        ["actions", 2, "causes", 0, "userName"],
+        ["actions", 3, "causes", 0, "userName"],
+        ["actions", 4, "causes", 0, "userName"],
+        ["actions", 5, "causes", 0, "userName"],
+        ["actions", 6, "causes", 0, "userName"],
+        ["actions", 7, "causes", 0, "userName"],
+        ["actions", 8, "causes", 0, "userName"],
+        ["actions", 9, "causes", 0, "userName"]
+    ]);
 }
 
-function syncPromotion(promotion,job) {
+function findRepoUrlInBuild(data) {
+    return path.coalesce(data,[
+        ["actions",0,"remoteUrls",0],
+        ["actions",1,"remoteUrls",0],
+        ["actions",2,"remoteUrls",0],
+        ["actions",3,"remoteUrls",0],
+        ["actions",4,"remoteUrls",0],
+        ["actions",5,"remoteUrls",0],
+        ["actions",6,"remoteUrls",0],
+        ["actions",7,"remoteUrls",0],
+        ["actions",8,"remoteUrls",0],
+        ["actions",9,"remoteUrls",0],
+    ]);
+}
+
+function syncPromotion(promotionType,promotion,job) {
     var promotionUrl = url.parse(promotion.url);
     jenkinsGet(promotionUrl.path + "api/json",
         got=>{
             let buildNumber = got.target ? got.target.number : undefined;
-            let promotionData = {
-                "id": got.id,
-                "repoName": job.name,
-                "buildNumber": buildNumber,
-                "duration": got.duration ? (got.duration / 1000) : undefined,
-                "created_timestamp": new Date(got.timestamp).toISOString(),
-                "status": got.result,
-                "description": got.description,
-                "url": got.url,
-                "user": findCulprit(got)
-            };
-            write(config.elasticsearch.index, "release", job.name + "-" + promotionData.id, promotionData);
+            jenkinsGet("job/" + job.name + "/" + buildNumber + "/api/json",
+                build=>{
+                    let promotionData = {
+                        "id": got.id,
+                        "jobName": job.name,
+                        "repoUrl": findRepoUrlInBuild(build),
+                        "buildNumber": buildNumber,
+                        "promotionType": promotionType,
+                        "duration": got.duration ? (got.duration / 1000) : undefined,
+                        "created_timestamp": new Date(got.timestamp).toISOString(),
+                        "status": got.result,
+                        "description": got.description,
+                        "url": got.url,
+                        "user": findCulprit(got)
+                    };
+                    write(config.elasticsearch.index, "release", job.name + "-" + promotionData.id, promotionData);
+                });
         }
     );
 }
@@ -131,7 +146,7 @@ function syncProcess(process,job) {
     jenkinsGet(processUrl.path + "api/json",
         got=>{
             for(let promotion of got.builds){
-                syncPromotion(promotion,job);
+                syncPromotion(process.name, promotion,job);
             }
         }
     );
@@ -157,6 +172,7 @@ function syncBuilds(job) {
                 let buildData = {
                     "id": jenkinsBuildData.id,
                     "repoName": job.name,
+                    "repoUrl": findRepoUrlInBuild(jenkinsBuildData),
                     "buildNumber": jenkinsBuildData.number,
                     "duration": jenkinsBuildData.duration ? (jenkinsBuildData.duration / 1000) : undefined,
                     "created_timestamp": new Date(jenkinsBuildData.timestamp).toISOString(),
@@ -240,11 +256,12 @@ function syncGitlabCommits(project) {
             let data = {
                 "uid": commit.id,
                 "repoName": project.name,
+                "repoUrl": project.ssh_url_to_repo,
                 "user": commit.author_email,
                 "description": commit.title,
                 "created_timestamp": commit.created_at
             };
-            write(config.elasticsearch.index,"commit",commit.uid,data);
+            write(config.elasticsearch.index,"commit",data.uid,data);
         }
     }, 0);
 }
@@ -255,6 +272,7 @@ function syncGitlabProjects() {
             let data = {
                 "id": project.id,
                 "repoName": project.name,
+                "repoUrl": project.ssh_url_to_repo,
                 "description": project.description,
                 "archived": project.archived,
                 "created_timestamp": project.created_at,
@@ -267,7 +285,6 @@ function syncGitlabProjects() {
 }
 
 // WRITE DATA
-
 function write(index, type, id, data) {
     console.info("Writing: " + index + "/" + type + "/" + id);
     elclient.index({
@@ -279,7 +296,6 @@ function write(index, type, id, data) {
 }
 
 // SETUP MODULES
-
 function setup() {
     setupJenkins();
     //setupGitlab();

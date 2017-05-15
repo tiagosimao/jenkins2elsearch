@@ -13,6 +13,6 @@
   "dependencies": {
       "elasticsearch": "13.0.1 ",
       "request": "2.81.0",
-      "async": "2.4.0"
+      "object-path": "0.11.4"
     }
 }
