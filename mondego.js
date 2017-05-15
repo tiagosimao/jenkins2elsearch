@@ -119,24 +119,29 @@ function syncPromotion(promotionType,promotion,job) {
     var promotionUrl = url.parse(promotion.url);
     jenkinsGet(promotionUrl.path + "api/json",
         got=>{
+            let call = build=>{
+                let promotionData = {
+                    "uid": got.id,
+                    "jobName": job.name,
+                    "repoUrl": findRepoUrlInBuild(build),
+                    "buildNumber": buildNumber,
+                    "promotionType": promotionType,
+                    "duration": got.duration ? (got.duration / 1000) : undefined,
+                    "created_timestamp": new Date(got.timestamp).toISOString(),
+                    "status": got.result,
+                    "description": got.description,
+                    "url": got.url,
+                    "user": findCulprit(got)
+                };
+                write(config.elasticsearch.index, "release", job.name + "-" + promotionData.uid, promotionData);
+            };
             let buildNumber = got.target ? got.target.number : undefined;
-            jenkinsGet("job/" + job.name + "/" + buildNumber + "/api/json",
-                build=>{
-                    let promotionData = {
-                        "uid": got.id,
-                        "jobName": job.name,
-                        "repoUrl": findRepoUrlInBuild(build),
-                        "buildNumber": buildNumber,
-                        "promotionType": promotionType,
-                        "duration": got.duration ? (got.duration / 1000) : undefined,
-                        "created_timestamp": new Date(got.timestamp).toISOString(),
-                        "status": got.result,
-                        "description": got.description,
-                        "url": got.url,
-                        "user": findCulprit(got)
-                    };
-                    write(config.elasticsearch.index, "release", job.name + "-" + promotionData.uid, promotionData);
-                });
+            if(buildNumber) {
+                jenkinsGet("job/" + job.name + "/" + buildNumber + "/api/json", call);
+            } else {
+                call();
+            }
+
         }
     );
 }
