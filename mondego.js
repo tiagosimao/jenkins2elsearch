@@ -123,7 +123,7 @@ function syncPromotion(promotionType,promotion,job) {
             jenkinsGet("job/" + job.name + "/" + buildNumber + "/api/json",
                 build=>{
                     let promotionData = {
-                        "id": got.id,
+                        "uid": got.id,
                         "jobName": job.name,
                         "repoUrl": findRepoUrlInBuild(build),
                         "buildNumber": buildNumber,
