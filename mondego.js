@@ -298,7 +298,7 @@ function write(index, type, id, data) {
 // SETUP MODULES
 function setup() {
     setupJenkins();
-    //setupGitlab();
+    setupGitlab();
     setupElasticsearch();
 }
 
