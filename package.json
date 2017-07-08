@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "ETL for software development support systems",
   "main": "mondego.js",
-
   "author": "Tiago Simao",
   "license": "MIT",
   "repository": {
@@ -11,8 +10,9 @@
     "url": "git://github.com/username/repository.git"
   },
   "dependencies": {
-      "elasticsearch": "13.0.1 ",
-      "request": "2.81.0",
-      "object-path": "0.11.4"
-    }
+    "elasticsearch": "13.0.1 ",
+    "request": "2.81.0",
+    "object-path": "0.11.4",
+    "etl": "0.5.6"
+  }
 }
