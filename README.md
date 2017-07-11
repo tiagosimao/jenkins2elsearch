@@ -10,17 +10,37 @@ Development support systems to Elasticsearch data migration
 ### Configuration
 ```json
 {
-  "elasticsearch": {
-    "url": "https://somewhere",
-    "index": "devopt"
+  "writer": {
+    "module": "elasticsearch",
+    "settings": {
+      "url": "https://somewhere",
+      "index": "devopt"
+    }
   },
-  "jenkins": {
-    "url": "https://bigus_dicus:hunter2@somewhere/jenkins"
-  },
-  "gitlab": {
-    "url": "https://somewhere/api/v3",
-    "username": "bigus_dicus",
-    "password": "hunter2"
-  }
+  "drivers": [
+    {
+      "id": "gitlab-v4",
+      "module": "./drivers/gitlab-v4",
+      "settings": {
+        "url": "https://somewhere/api/v3",
+        "username": "bigus_dicus",
+        "password": "hunter2"
+      }
+    },
+    {
+      "id": "jenkins-v2",
+      "module": "./drivers/jenkins-v2",
+      "settings": {
+        "url": "https://bigus_dicus:hunter2@somewhere/jenkins"
+      }
+    },
+    {
+      "id": "jenkins-promoted-builds-v2",
+      "module": "./drivers/jenkins-promoted-builds-v2",
+      "settings": {
+        "url": "https://bigus_dicus:hunter2@somewhere/jenkins"
+      }
+    }
+  ]
 }
 ```
