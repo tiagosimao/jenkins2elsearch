@@ -1,8 +1,9 @@
-const fs = require('fs');
+const configLoader = require('./config-loader');
+const driverBooter = require('./driver-booter');
+const dataSyncer = require('./data-syncer');
+
 const http = require('https');
-const url = require('url');
-const request = require('request');
-const elasticsearch = require('elasticsearch');
+
 const events = require('events');
 let path = require("object-path");
 
@@ -332,47 +333,25 @@ function setupJenkins() {
     queue(syncJenkinsJobs);
 }
 
-function setupGitlab() {
-    if(!config.gitlab.url) {
-        console.error("No URL set for GitLab");
-    }
-    if(!config.gitlab.url.endsWith("/")){
-        config.gitlab.url += "/";
-    }
-    request.post(
-        config.gitlab.url + "/session?login="+config.gitlab.username+"&password=" + config.gitlab.password,
-        function (error, response, body) {
-            if (!error && response.statusCode < 300) {
-                let got = JSON.parse(body);
-                config.gitlab.private_token = got.private_token;
-                if(config.gitlab.private_token) {
-                    queue(syncGitlabProjects);
-                } else {
-                    console.error("Gitlab: Invalid authentication response");
-                }
-            } else {
-                console.error("Gitlab: setup error: " + response.statusCode);
-            }
-        }
-    );
-}
+
 
 // BOOTSTRAP
-function loadConfig(configLocation) {
-    config = JSON.parse(fs.readFileSync(configLocation, encoding="utf-8"));
-}
 
-function boot() {
-    let configLocation = process.argv[2];
-    if(!configLocation) {
-        console.error("usage: node mondego.js <config file location>")
-    } else {
-        loadConfig(configLocation);
-        bus.on(moduleReadyEvent,()=>{
-            sync();
-        });
-        setup();
 
-    }
-}
-boot();
+configLoader.load(process.argv[2])
+.then(
+  mondego=>{
+    console.log("Loaded Mondego");
+    driverBooter.boot(mondego).then(
+      ok=>{
+        console.log("Finish driver boot");
+        dataSyncer.sync(mondego).then(
+          ok=>console.log("Finished data sync"),
+          ko=>console.error("Error syncing data: " + ko)
+        )
+      },
+      ko=>console.log("Error loading modules: " + ko)
+    );
+  },
+  ko=>console.error(ko)
+);
