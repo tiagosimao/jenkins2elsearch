@@ -7,14 +7,14 @@ module.exports.setup = function(settings){
     setup(settings,ff,rj);
   });
 };
-module.exports.getRepos = function(fromCursor,changedSince){
+module.exports.getRepos = function(cursor,input){
   return new Promise((ff,rj)=>{
-    getNextRepos(fromCursor,ff,rj);
+    getNextRepos(cursor,input,ff,rj);
   });
 };
-module.exports.getCommits = function(fromCursor,repo){
+module.exports.getCommits = function(cursor,input){
   return new Promise((ff,rj)=>{
-    getNextCommits(repo,fromCursor,ff,rj);
+    getNextCommits(cursor,input,ff,rj);
   });
 };
 
@@ -42,13 +42,13 @@ function setup(settings,ff,rj) {
           rj("Gitlab: Invalid authentication response");
         }
       } else {
-        rj("Gitlab: setup error: " + response.statusCode);
+        rj("Gitlab: setup error: " + error);
       }
     }
   );
 }
 
-function get(start,cursor,mapper,ff,rj) {
+function get(start,cursor,input,mapper,ff,rj) {
   let url = cursor?cursor:apiBase+start;
   let options = {
     url: url,
@@ -71,10 +71,7 @@ function get(start,cursor,mapper,ff,rj) {
           next = link.get( 'rel', 'next' );
           next = (next && next.length>0) ? next[0] : undefined;
         }
-        ff({
-          data: mapper(got),
-          cursor: next ? next.uri : undefined
-        });
+        ff(mapper(got,next ? next.uri : undefined));
       } else {
         ff({
           data: [],
@@ -88,11 +85,19 @@ function get(start,cursor,mapper,ff,rj) {
   });
 }
 
-function getNextRepos(from,ff,rj) {
+function getNextRepos(cursor,input,ff,rj) {
   get(
     "projects?archived=true&order_by=last_activity_at&sort=asc&statistics=true",
-    from,
-    transformRepos,
+    cursor,
+    input,
+    (got,cursor)=>{
+      return {
+        "data": transformRepos(got).filter(repo=>{
+          return !input || repo.activity_timestamp>=input;
+        }),
+        "cursor": cursor
+      };
+    },
     ff,
     rj);
 }
@@ -101,7 +106,8 @@ function transformRepos(gitLabRepos) {
   const result = [];
   for(let project of gitLabRepos) {
     let data = {
-      "id": project.id,
+      "id": "gitlab-" + project.id,
+      "gitlabProjectId": + project.id,
       "repoName": project.name,
       "repoUrl": project.ssh_url_to_repo,
       "description": project.description,
@@ -115,11 +121,17 @@ function transformRepos(gitLabRepos) {
   return result;
 }
 
-function getNextCommits(repo,from,ff,rj) {
+function getNextCommits(cursor,repo,ff,rj) {
   get(
-    "projects/"+repo.id+"/repository/commits",
-    from,
-    (commitList)=>transformCommits(repo,commitList),
+    "projects/"+repo.gitlabProjectId+"/repository/commits",
+    cursor,
+    repo,
+    (commitList,cursor)=>{
+      return {
+      "data": transformCommits(repo,commitList),
+      "cursor": cursor
+      }
+    },
     ff,
     rj);
 }

@@ -10,9 +10,10 @@
     "url": "git://github.com/username/repository.git"
   },
   "dependencies": {
-    "elasticsearch": "^13.2.0",
-    "http-link-header": "^0.8.0",
-    "object-path": "^0.11.4",
-    "request": "^2.81.0"
+    "elasticsearch": "13.2.0",
+    "http-link-header": "0.8.0",
+    "object-path": "0.11.4",
+    "request": "2.81.0",
+    "xml2js": "0.4.17"
   }
 }

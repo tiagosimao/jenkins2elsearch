@@ -76,6 +76,7 @@ function loadDriver(mondego,driverConfig){
     id: driverConfig.id,
     module: code,
     pendingJobs: [],
+    runningJobs: [],
     failedJobs: [],
     settings: driverConfig.settings
   };
