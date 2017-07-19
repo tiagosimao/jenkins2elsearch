@@ -66,7 +66,7 @@ function pipelinesReader(body){
       const allP = [];
       for(let i=0;i<json.jobs.length;++i){
         const job = json.jobs[i];
-        console.log("Reading pipeline " + job.name + " from Jenkins")
+        //console.log("Reading pipeline " + job.name + " from Jenkins")
         // fetch data from config.xml
         const configPromise = get(jenkinsBaseUrl+'job/'+job.name+'/config.xml');
         allP.push(configPromise);

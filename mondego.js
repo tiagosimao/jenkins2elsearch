@@ -1,350 +1,225 @@
 const configLoader = require('./config-loader');
-const driverBooter = require('./driver-booter');
 const dataSyncer = require('./data-syncer');
+const uuidv4 = require('uuid/v4');
 
-const http = require('https');
+module.exports.loadSourceDriver = (id,modulePath,settings)=>{
+  return loadDriver("source-driver:" + id, "source-driver:" + id, modulePath, settings);
+};
 
-const events = require('events');
-let path = require("object-path");
+module.exports.loadDestinationDriver = (modulePath, settings)=>{
+  return loadDriver("destination-driver", "destination-driver@" + modulePath, modulePath, settings);
+};
 
-const bus = new events.EventEmitter();
+module.exports.loadStateDriver = (modulePath, settings)=>{
+  return loadDriver("state-driver", "state-driver@" + modulePath, modulePath, settings);
+};
 
-const moduleReadyEvent = "moduleReadyEvent";
-const jenkinsReadyEvent = "jenkinsReadyEvent";
+module.exports.boot = () => {
+  return bootAll();
+};
 
-let writerReady = false;
-let queuedReaders = [];
+module.exports.queueJob = queueJob;
+module.exports.pickupJob = pickupJob;
+module.exports.resolveJob = resolveJob;
+module.exports.rejectJob = rejectJob;
+module.exports.forEachDriver = forEachDriver;
+module.exports.loadState = loadState;
+module.exports.saveState = saveState;
 
-let config;
-let elclient;
+const mondego = {
+  drivers: [],
+  state: {
+    pending: {},
+    running: {}
+  }
+};
 
+const repoBootstrap = {
+  "method": "syncRepo"
+};
+const pipeBootstrap = {
+  "method": "syncPipeline"
+};
 
-// QUEUE
-function queue(reader) {
-    queuedReaders.push(reader);
-    bus.emit(moduleReadyEvent);
-}
-
-// READERS
-function sync() {
-    if(writerReady) {
-        let reader;
-        while(reader=queuedReaders.pop()) {
-            reader();
+function loadState(){
+  mondego.drivers.forEach(driver=>{
+    if(driver.id=="state-driver"){
+      driver.module.getState().then(
+        state=>{
+          mondego.drivers.forEach(driver=>{
+            let jobs = [];
+            if(state.pending && state.pending[driver.id]){
+              jobs = jobs.concat(state.pending[driver.id]);
+            }
+            if(state.running && state.running[driver.id]){
+              jobs = jobs.concat(state.running[driver.id]);
+            }
+            console.log("Loading previous state on driver " + driver.name + ": " + jobs.length + " jobs");
+            mondego.state.pending[driver.id]=jobs;
+          });
+        },
+        nothin=>{
+          console.log("No previous state found, bootstrapping: " + nothin);
+          queueJob(/source.*/,repoBootstrap);
+          queueJob(/source.*/,pipeBootstrap);
         }
+      );
     }
+  });
 }
 
+function saveState(){
+  mondego.drivers.forEach(driver=>{
+    if(driver.id=="state-driver"){
+      driver.module.setState(mondego.state);
+    }
+  });
+}
 
-// JENKINS
-let jenkinsQueue = [];
-let jenkinsWait = 100;
-let jenkinsMaxWait = 60000;
-let jenkinsCurrentWait = 0;
+function queueJob(driverId,job) {
+  if(job){
+    job.id=uuidv4();
+    forEachDriver((driver)=>{
+      if(driver.id==driverId || driver.id.match(driverId)){
+        if(!mondego.state.pending[driver.id]){
+          mondego.state.pending[driver.id]=[];
+        }
+        mondego.state.pending[driver.id].push(job);
+      }
+    });
+  }
+}
 
-function readJenkinsQueue() {
-    let call;
-    if(call=jenkinsQueue.pop()) {
-        call(()=>{
-            jenkinsWait=Math.min(10000,jenkinsWait+100);
-            setTimeout(readJenkinsQueue,jenkinsWait);
-        },()=>{
-            jenkinsWait=Math.max(jenkinsWait-100,0);
-            setTimeout(readJenkinsQueue,jenkinsWait);
+function pickupJob(driverId) {
+  return new Promise((ff,rj)=>{
+    const queue = mondego.state.pending[driverId];
+    const job = queue ? queue.shift() : undefined;
+    if(job) {
+      if(!mondego.state.running[driverId]){
+        mondego.state.running[driverId]=[];
+      }
+      mondego.state.running[driverId].push(job);
+      ff(job);
+    } else {
+      rj();
+    }
+  });
+}
+
+function resolveJob(driverId,job) {
+  return new Promise((ff,rj)=>{
+    const queue = mondego.state.running[driverId];
+    const at = getJobIndex(queue,job);
+    if(at>-1){
+      mondego.state.running[driverId].splice(at,1);
+      ff();
+      if(!driverId=="state-driver"){
+        queueJob("state-driver",{
+          "type":"saveState",
+          "cursor": undefined,
+          "input": mondego.state
         });
-    } else if(jenkinsCurrentWait<jenkinsMaxWait) {
-        jenkinsCurrentWait+=100;
-        setTimeout(readJenkinsQueue,100); // poll interval
+      }
+    } else {
+      rj("No such job was running on driver " + driverId + ": " + JSON.stringify(job));
     }
+  });
 }
 
-function jenkinsGet(path, reader) {
-    jenkinsQueue.push((retry,next)=>{
-        let callUri = url.resolve(config.jenkins.url,path);
-        console.info("Calling Jenkins: " + path);
-        request(url.format(callUri), (error,response,body)=>{
-            try{
-                if(error) {
-                    console.error("Error getting data from Jenkins: " + callUri.path);
-                    console.error(error);
-                } else if(response && response.statusCode < 300) {
-                    let data = JSON.parse(body);
-                    reader(data);
-                } else {
-                    let cause = response ? response.statusCode : "unknown cause";
-                    console.error("Error getting data from Jenkins: " + cause + " at " + path);
-                }
-            } finally {
-                if(error || response && response.statusCode>499){
-                    retry();
-                } else {
-                    next();
-                }
-            }
-        });
-    });
-}
-
-function findCulprit(data) {
-    return path.coalesce(data,[
-        ["culprits",0,"fullName"],
-        ["actions", 0, "causes", 0, "userName"],
-        ["actions", 1, "causes", 0, "userName"],
-        ["actions", 2, "causes", 0, "userName"],
-        ["actions", 3, "causes", 0, "userName"],
-        ["actions", 4, "causes", 0, "userName"],
-        ["actions", 5, "causes", 0, "userName"],
-        ["actions", 6, "causes", 0, "userName"],
-        ["actions", 7, "causes", 0, "userName"],
-        ["actions", 8, "causes", 0, "userName"],
-        ["actions", 9, "causes", 0, "userName"]
-    ]);
-}
-
-function findRepoUrlInBuild(data) {
-    return path.coalesce(data,[
-        ["actions",0,"remoteUrls",0],
-        ["actions",1,"remoteUrls",0],
-        ["actions",2,"remoteUrls",0],
-        ["actions",3,"remoteUrls",0],
-        ["actions",4,"remoteUrls",0],
-        ["actions",5,"remoteUrls",0],
-        ["actions",6,"remoteUrls",0],
-        ["actions",7,"remoteUrls",0],
-        ["actions",8,"remoteUrls",0],
-        ["actions",9,"remoteUrls",0],
-    ]);
-}
-
-function syncPromotion(promotionType,promotion,job) {
-    var promotionUrl = url.parse(promotion.url);
-    jenkinsGet(promotionUrl.path + "api/json",
-        got=>{
-            let call = build=>{
-                let promotionData = {
-                    "uid": got.id,
-                    "jobName": job.name,
-                    "repoUrl": findRepoUrlInBuild(build),
-                    "buildNumber": buildNumber,
-                    "promotionType": promotionType,
-                    "duration": got.duration ? (got.duration / 1000) : undefined,
-                    "created_timestamp": new Date(got.timestamp).toISOString(),
-                    "status": got.result,
-                    "description": got.description,
-                    "url": got.url,
-                    "user": findCulprit(got)
-                };
-                write(config.elasticsearch.index, "release", job.name + "-" + promotionData.uid, promotionData);
-            };
-            let buildNumber = got.target ? got.target.number : undefined;
-            if(buildNumber) {
-                jenkinsGet("job/" + job.name + "/" + buildNumber + "/api/json", call);
-            } else {
-                call();
-            }
-
-        }
-    );
-}
-
-function syncProcess(process,job) {
-    var processUrl = url.parse(process.url);
-    jenkinsGet(processUrl.path + "api/json",
-        got=>{
-            for(let promotion of got.builds){
-                syncPromotion(process.name, promotion,job);
-            }
-        }
-    );
-}
-
-function syncPromotions(job) {
-    var jobUrl = url.parse(job.url);
-    jenkinsGet(jobUrl.path + "promotion/api/json",
-        got=>{
-            for(let process of got.processes){
-                syncProcess(process,job);
-            }
-        }
-    );
-}
-
-function syncBuilds(job) {
-    for (var i in job.builds) {
-        var build = job.builds[i];
-        var buildUrl = url.parse(build.url);
-        jenkinsGet(buildUrl.path + "api/json",
-            function (jenkinsBuildData) {
-                let buildData = {
-                    "uid": jenkinsBuildData.id,
-                    "repoName": job.name,
-                    "repoUrl": findRepoUrlInBuild(jenkinsBuildData),
-                    "buildNumber": jenkinsBuildData.number,
-                    "duration": jenkinsBuildData.duration ? (jenkinsBuildData.duration / 1000) : undefined,
-                    "created_timestamp": new Date(jenkinsBuildData.timestamp).toISOString(),
-                    "status": jenkinsBuildData.result,
-                    "description": jenkinsBuildData.description,
-                    "url": jenkinsBuildData.url,
-                    "user": findCulprit(jenkinsBuildData)
-                };
-                write(config.elasticsearch.index, "build", job.name + "-" + buildData.uid, buildData);
-        });
+function rejectJob(driverId,job) {
+  return new Promise((ff,rj)=>{
+    const queue = mondego.state.running[driverId];
+    const at = getJobIndex(queue,job);
+    if(at>-1){
+      mondego.state.running[driverId].splice(at,1);
+      job.errorCount = job.errorCount ? (job.errorCount+1) : 1;
+      queueJob(driverId,job);
+      ff();
+    } else {
+      rj("No such job was running on driver " + driverId + ": " + JSON.stringify(job));
     }
+  });
 }
 
-function syncJenkinsJobs() {
-    jenkinsGet("api/json",
-        (rootData) => {
-            for(let jobSummary of rootData.jobs){
-                var jobUrl = url.parse(jobSummary.url);
-                jenkinsGet(jobUrl.path + "api/json",
-                    (job) => {
-                        syncBuilds(job);
-                        syncPromotions(job);
-                    });
-            }
-        });
-}
-
-
-// GITLAB
-function gitlabGet(apiPath, reader, pageIndex, pageSize) {
-    apiPath = apiPath.replace(/^\/|\/$/,'');
-    let path = url.parse(config.gitlab.url+apiPath);
-    if(pageIndex || pageIndex==0) {
-        let search = path.search;
-        if(search){
-            search+="&";
-        } else {
-            search="?";
-        }
-        search+="page=" + pageIndex
-        if(!pageSize){
-            pageSize = 20;
-        }
-        search+="per_page=" + pageSize;
-        path.search = search;
+function getJobIndex(queue,job){
+  for(let i=0;i<queue.length;++i){
+    if(queue[i].id==job.id){
+      return i;
     }
-    let options = {
-        url: url.format(path),
-        headers: {
-            'PRIVATE-TOKEN': config.gitlab.private_token
-        }
-    };
-    console.info("Calling Gitlab: " + options.url);
-    request(options, function (error, response, body) {
-        if(error) {
-            console.error("Error getting data from Gitlab: " + error)
-        }  else if (response && response.statusCode < 300) {
-            let got = JSON.parse(body);
-            if(got && Object.keys(got).length > 0) {
-                reader(got);
-                let nextPageIndex = response.headers["x-next-page"];
-                if (!nextPageIndex) {
-                    nextPageIndex = pageIndex ? (pageIndex + 1) : 1;
-                }
-                let suggestedPageSize = response.headers["x-per-page"];
-                if (suggestedPageSize) {
-                    pageSize = suggestedPageSize;
-                }
-                gitlabGet(apiPath, reader, nextPageIndex, pageSize);
-            }
-        } else {
-            let cause = response ? response.satusCode : "unknown cause";
-            console.error("Error getting data from Gitlab: " + options.url  + " (" + cause + ")")
-        }
-    });
+  }
+  return -1;
 }
 
-function syncGitlabCommits(project) {
-    gitlabGet("/projects/" + project.id + "/repository/commits",commits=>{
-        for(let commit of commits) {
-            let data = {
-                "uid": commit.id,
-                "repoName": project.name,
-                "repoUrl": project.ssh_url_to_repo,
-                "user": commit.author_email,
-                "description": commit.title,
-                "created_timestamp": commit.created_at
-            };
-            write(config.elasticsearch.index,"commit",project.name + "-" + data.uid,data);
-        }
-    }, 0);
+function forEachDriver(consumer){
+  mondego.drivers.forEach((driver)=>consumer(driver));
 }
 
-function syncGitlabProjects() {
-    gitlabGet("/projects/",projects=>{
-        for(let project of projects) {
-            let data = {
-                "id": project.id,
-                "repoName": project.name,
-                "repoUrl": project.ssh_url_to_repo,
-                "description": project.description,
-                "archived": project.archived,
-                "created_timestamp": project.created_at,
-                "activity_timestamp": project.last_activity_at
-            };
-            write(config.elasticsearch.index,"repo",project.id,data);
-            syncGitlabCommits(project);
-        }
-    });
-}
-
-// WRITE DATA
-function write(index, type, id, data) {
-    console.info("Writing: " + index + "/" + type + "/" + id);
-    elclient.index({
-        index: index,
-        type: type,
-        id: id,
-        body: data
-    });
-}
-
-// SETUP MODULES
-function setup() {
-    setupJenkins();
-    setupGitlab();
-    setupElasticsearch();
-}
-
-function setupElasticsearch() {
-    elclient = new elasticsearch.Client({
-        host: config.elasticsearch.url,
-        log: 'info'
-    });
-    elclient.ping({
-        requestTimeout: 1000
-    }, function (error) {
-        if (error) {
-            console.error("Error connecting to Elasticsearch");
-        } else {
-            writerReady=true;
-            bus.emit(moduleReadyEvent);
-        }
-    });
-}
-
-function setupJenkins() {
-    if(!config.jenkins.url.endsWith('/')){
-        config.jenkins.url+='/';
+function loadDriver(id, name, modulePath, settings){
+  return new Promise((ff,rj)=>{
+    try {
+      delete require.cache[require.resolve(modulePath)]
+      const code = require(modulePath);
+      mondego.drivers.push({
+        "id": id,
+        "name": name,
+        "module": code,
+        "settings": settings
+      });
+      ff(mondego);
+    } catch(e){
+      console.error("Error loading driver " + name + " with ID " + id + " at " + modulePath + ": " + e);
+      rj();
     }
-    readJenkinsQueue();
-    queue(syncJenkinsJobs);
+  });
 }
 
+function bootAll(){
+  return new Promise((ff,rj)=>{
+    const pees = mondego.drivers.filter((driver)=>{
+      if(!driver.module.setup){
+        console.warn("Warning: no setup method found for driver at " + driver.name);
+      }
+      return driver.module.setup;
+    })
+    .map((driver)=>{
+      const p = driver.module.setup(driver.settings);
+      p.then(
+        ok=>console.log("Driver boot completed [" + driver.name + "]: " + ok),
+        ko=>console.error("Driver boot error [" + driver.name + "]: " + ko)
+      );
+    })
+    Promise.all(pees).then(ok=>ff(mondego),ko=>rj(ko));
+  });
+}
 
-
-// BOOTSTRAP
-
+const progress=['|','/','-','\\'];
+let reportI = 0;
+function report(){
+  setTimeout(()=>{
+    reportI = (reportI + 1)%4;
+    //process.stdout.write('\x1B[2J\x1B[0f');
+    console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
+    console.log(" " + progress[reportI] + "\tdriver\t\t\t\t\t\t\t\trunning\tpending");
+    mondego.drivers.forEach((driver)=>{
+      const pending = mondego.state.pending[driver.id] ? mondego.state.pending[driver.id] : [];
+      const running = mondego.state.running[driver.id] ? mondego.state.running[driver.id] : [];
+      let name = driver.name.length > 64 ?
+        driver.name.substring(0,64) :
+        driver.name+new Array(64-driver.name.length).join(" ");
+      console.log("\t" + name + "\t" + running.length + "\t" + pending.length);
+    });
+    report();
+  },1000);
+}
 
 configLoader.load(process.argv[2])
 .then(
   mondego=>{
     console.log("Loaded Mondego");
-    driverBooter.boot(mondego).then(
+    mondego.boot().then(
       ok=>{
-        console.log("Finish driver boot");
+        console.log("Booted Mondego");
+        report();
         dataSyncer.sync(mondego).then(
           ok=>console.log("Finished data sync"),
           ko=>console.error("Error syncing data: " + ko)

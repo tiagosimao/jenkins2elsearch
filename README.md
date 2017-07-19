@@ -10,14 +10,21 @@ Development support systems to Elasticsearch data migration
 ### Configuration
 ```json
 {
-  "writer": {
-    "module": "elasticsearch",
+  "destinationDriver": {
+    "module": "./drivers/elasticsearch-v6",
     "settings": {
-      "url": "https://somewhere",
-      "index": "devopt"
+      "url": "localhost:9200",
+      "index": "mydevdata"
     }
   },
-  "drivers": [
+  "stateDriver": {
+    "module": "./drivers/elasticsearch-v6",
+    "settings": {
+      "url": "localhost:9200",
+      "index": "mondego"
+    }
+  },
+  "sourceDrivers": [
     {
       "id": "gitlab-v4",
       "module": "./drivers/gitlab-v4",

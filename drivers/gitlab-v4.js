@@ -57,7 +57,7 @@ function get(start,cursor,input,mapper,ff,rj) {
     },
     timeout: 10000
   };
-  console.info("Calling Gitlab: " + options.url);
+  //console.info("Calling Gitlab: " + options.url);
   request(options, function (error, response, body) {
     if(error) {
       rj("Error getting data from Gitlab: " + error)

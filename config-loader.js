@@ -1,4 +1,5 @@
 const fs = require('fs');
+const mondego = require('./mondego');
 
 module.exports.load = function(configLocation){
   return new Promise((ff,rj)=>{
@@ -25,60 +26,15 @@ function loadFromConfig(config) {
     if(!config){
       rj("Invalid configuration");
     } else {
-      const mondego = {
-        drivers: {},
-        writer: {}
-      };
-      mondego.forEachDriver = function(consumer){
-        const drivers = mondego.drivers;
-        const ks = Object.keys(drivers);
-        for(let i = 0; i<ks.length; ++i) {
-          const driverId = ks[i];
-          const driver = drivers[driverId];
-          consumer(driver);
-        }
-      };
-      mondego.queue = function(jobs) {
-        if(!jobs){
-          return;
-        }
-        if(!jobs.length) {
-          jobs = [jobs];
-        }
-        mondego.forEachDriver(driver=>driver.pendingJobs = driver.pendingJobs.concat(jobs));
-      };
-      if(!config.writer){
-        return rj("No writer module found");
-      } else {
-        mondego.writer.module = require('./writer/'+config.writer.module);
-        mondego.writer.settings = config.writer.settings;
-        mondego.write = (type,data)=>{mondego.writer.module.write(type,data)};
+      const p = [
+        mondego.loadDestinationDriver(config.destinationDriver.module,config.destinationDriver.settings),
+        mondego.loadStateDriver(config.stateDriver.module,config.stateDriver.settings)
+      ];
+      for(let i=0;i<config.sourceDrivers.length;++i){
+        const driverConf = config.sourceDrivers[i];
+        p.push(mondego.loadSourceDriver(driverConf.id,driverConf.module,driverConf.settings));
       }
-      loadDrivers(mondego,config.drivers);
-      ff(mondego);
+      Promise.all(p).then(ok=>ff(mondego),ko=>rj(ko));
     }
   });
-}
-
-function loadDrivers(mondego,driversConfig) {
-  if(!driversConfig.length){
-    loadDriver(mondego,driversConfig);
-  } else {
-    for(let i=0;i<driversConfig.length;++i){
-      loadDriver(mondego,driversConfig[i]);
-    }
-  }
-}
-
-function loadDriver(mondego,driverConfig){
-  const code = require(driverConfig.module);
-  mondego.drivers[driverConfig.id] = {
-    id: driverConfig.id,
-    module: code,
-    pendingJobs: [],
-    runningJobs: [],
-    failedJobs: [],
-    settings: driverConfig.settings
-  };
-  console.log("Loaded driver: " + driverConfig.id);
 }

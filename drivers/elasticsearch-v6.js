@@ -5,14 +5,46 @@ module.exports.setup = function(settings){
     setup(settings,ff,rj);
   });
 };
-module.exports.write = function(type,data){
+module.exports.getState = function(){
   return new Promise((ff,rj)=>{
-    data.type= type,
+    elclient.get({
+      index: index,
+      type: elType,
+      id: stateId
+    }, function (error, response) {
+      if(error){
+        rj("Error loading mondego's state: " + error);
+      } else {
+        ff(response._source);
+      }
+    });
+  });
+};
+module.exports.setState = function(state){
+  return new Promise((ff,rj)=>{
     elclient.index({
       "index": index,
-      "type": "doc",
-      "id": data.id,
-      "body": data },
+      "type": elType,
+      "id": stateId,
+      "body": state },
+      (err,ok)=>{
+        if(err){
+          console.error("Error writing to elasticsearch: " + err);
+          rj(err);
+        } else {
+          //console.log("Wrote on index=" + index + ", type=" + type);
+          ff(ok);
+        }
+      });
+    });
+};
+module.exports.write = function(cursor,input){
+  return new Promise((ff,rj)=>{
+    elclient.index({
+      "index": index,
+      "type": elType,
+      "id": input.id,
+      "body": input },
       (err,ok)=>{
         if(err){
           console.error("Error writing to elasticsearch: " + err);
@@ -25,6 +57,8 @@ module.exports.write = function(type,data){
     });
   };
 
+const elType = "doc";
+const stateId = "mondegoState";
 let elclient;
 let index;
 
@@ -36,12 +70,12 @@ function setup(settings,ff,rj) {
   index = settings.index;
   elclient.indices.exists({
     "index": index,
-  }, (err,ok)=>{
+  }, (err,response)=>{
     if (err) {
       rj("Error finding index in Elasticsearch: " + err);
     }
-    if(ok) {
-      ff("Found index " + index + " in Elasticsearch: " + ok);
+    if(response) {
+      ff("Found index " + index + " in Elasticsearch: " + response);
     } else {
       console.log("Index " + index + " not found")
       elclient.indices.create({

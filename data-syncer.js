@@ -1,91 +1,49 @@
-const jobCreator = require('./job-creator');
+const jobRunner = require('./job-runner');
 
 const no_delay = 0;
 const long_delay = 1000;
 
-let emptyReportCount = 0;
-
-let state = [
-  {
-    "constructor": "newRepoSync",
-    "cursor": undefined,
-    "input": undefined
-  },
-  {
-    "constructor": "newPipelineSync",
-    "cursor": undefined,
-    "input": undefined
-  }
-];
+let stop;
 
 module.exports.sync = function(mondego){
     return new Promise((ff,rj)=>{
-      report(mondego);
-      mondego.forEachDriver(driver=>fireConsumer(driver,no_delay));
-      loadState(mondego);
+      mondego.forEachDriver(driver=>fireConsumer(mondego,driver,no_delay));
+      mondego.loadState();
     });
 };
 
-function loadState(mondego){
-  //mondego.queue(jobCreator.newRepoSync(mondego,undefined,undefined));
-  //mondego.queue(jobCreator.newPipelineSync(mondego,undefined,undefined));
-  state.map(job=>{
-    mondego.queue(jobCreator[job.constructor](mondego,job.cursor,job.input));
-  });
-}
-
-function fireConsumer(driver,delay){
-  setTimeout(()=>{
-    if(emptyReportCount>5){
-      console.log("Shutting down driver " + driver.id);
-      return;
-    }
-    let isRetry = false;
-    let job = driver.pendingJobs.shift();
-    if(!job){
-      job = driver.failedJobs.shift();
-      isRetry = true;
-    }
-    if(!job) {
-      return fireConsumer(driver,long_delay);
-    }
-    driver.runningJobs.push(job);
-    job.fire(driver).then(
-      driverResult=>{
-        try{
-          job.accept(driver, driverResult);
-        } catch(ex){
-          console.error("Error accepting data: " + ex);
-        } finally {
-          driver.runningJobs.splice(driver.runningJobs.indexOf(job),1);
-          fireConsumer(driver,no_delay);
-        }
-      },
-      ko=>{
-        console.error("Job '" + job.name + "' failed on driver " + driver.id + ": " + ko)
-        driver.runningJobs.splice(driver.runningJobs.indexOf(job),1);
-        driver.failedJobs.push(job);
-        fireConsumer(driver, isRetry ? long_delay : no_delay);
-      }
-    )},delay);
-}
-
-function report(mondego){
+function fireConsumer(mondego,driver,delay){
   setTimeout(
     ()=>{
-      let count = 0;
-      mondego.forEachDriver(driver=>{
-        count+=driver.pendingJobs.length+driver.runningJobs.length+driver.failedJobs.length;
-        console.log("Driver " + driver.id + " has " + driver.pendingJobs.length + " pending, "
-         + driver.runningJobs.length + " running and " + driver.failedJobs.length + " failed jobs");
-      });
-      if(count==0){
-        emptyReportCount++;
+      if(stop){
+        console.log("Shutting down driver " + driver.name);
+        return;
       }
-      if(emptyReportCount>5){
-        console.log("Idle for too long... shutting down");
-      } else{
-        report(mondego);
+      mondego.pickupJob(driver.id).then(
+        job=>{
+          jobRunner.run(driver,job).then(
+            nextJobs=>{
+              //console.info("Completed job " + job.method + " on driver " + driver.name);
+              if(nextJobs){
+                nextJobs.onDriver.forEach(j=>{
+                  mondego.queueJob(driver.id,j);
+                });
+                nextJobs.onDestination.forEach(j=>{
+                  mondego.queueJob("destination-driver",j);
+                });
+              }
+              mondego.resolveJob(driver.id,job);
+              mondego.saveState();
+              fireConsumer(mondego,driver,no_delay);
+            },
+            ko=>{
+              console.error("Error running job " + job.method + " on driver " + driver.name + ": " + ko);
+              mondego.rejectJob(driver.id,job);
+              fireConsumer(mondego,driver,long_delay);
+            }
+          );
+        },
+        jobless=>fireConsumer(mondego,driver,long_delay));
       }
-    },5000);
+    ,delay);
 }
