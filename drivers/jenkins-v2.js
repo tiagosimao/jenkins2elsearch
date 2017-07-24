@@ -6,6 +6,9 @@ module.exports.setup = function(settings){
 module.exports.getPipelines = (fromCursor, changedSince)=>{
   return getPipelines(fromCursor, changedSince);
 }
+module.exports.getBuilds = (fromCursor, pipeline)=>{
+  return getBuilds(fromCursor, pipeline);
+}
 
 const request = require('request');
 const XML = require('xml2js');
@@ -34,6 +37,88 @@ function get(endpoint,reader) {
     });
   });
 }
+
+
+// getBuilds
+// url/job/<JOB NAME>/api/json?tree=builds[id,url,duration,timestamp,number,result]
+// url/job/<JOB NAME>/api/json?tree=allBuilds[id,url,duration,timestamp,number,result]
+
+function getBuilds(cursor, pipeline) {
+  return new Promise((ff,rj)=>{
+    get(jenkinsBaseUrl+'job/' + pipeline.source_id + '/api/json?tree=allBuilds[id,url,duration,timestamp,number,result]').then(
+      body=>{
+        buildsReader(pipeline,body).then(
+          builds=>{
+            ff({
+              data: builds,
+              cursor: undefined
+            });
+          },
+          error=>{
+            rj(error);
+          }
+        );
+      },
+      error=>{
+        rj(error);
+      }
+    );
+  });
+}
+
+// getBuild: steps, artifacts, culprits ...
+// url/job/<JOB NAME>/<JOB NUMBER>/api/json?tree=id,result,timestamp,url,culprits[id],description,displayName,duration,fullDisplayName
+function buildsReader(pipeline,body){
+  return new Promise((ff,rj)=>{
+    try{
+      const json = JSON.parse(body);
+      const allP = [];
+      for(let i=0;i<json.allBuilds.length;++i){
+        const build = json.allBuilds[i];
+        const apiPromise = get(jenkinsBaseUrl+'job/' + pipeline.source_id +'/' + build.number + '/api/json?tree=id,result,timestamp,url,culprits[id],description,displayName,duration,fullDisplayName');
+        allP.push(apiPromise);
+        apiPromise.then(
+          body=>{
+            const json = JSON.parse(body);
+            Object.assign(build,json);
+          },
+          ko=>{
+            rj(ko);
+          }
+        );
+      }
+      Promise.all(allP).then(
+        ok=>ff(toBuilds(pipeline, json.allBuilds)),
+        ko=>rj(ko)
+      );
+    } catch(e) {
+      rj(e);
+    }
+  });
+}
+
+function toBuilds(pipeline,builds){
+  return builds.map(build=>{
+    return {
+      "source_id": pipeline.source_id + '-' + build.id,
+      "source": "jenkins",
+      "name": build.fullDisplayName ? build.fullDisplayName : build.name,
+      "description" : build.description,
+      "number": build.number,
+      "duration": build.duration,
+      "status": build.result,
+      "created_timestamp": build.timestamp,
+      "url": build.url
+    };
+  });
+}
+
+// getPipelines
+// url/api/json?tree=jobs[url]
+
+// getPipeline
+// url/job/<JOB NAME>/api/json?tree=name,description,url
+// url/job/<JOB NAME>/config.xml
 
 function getPipelines(cursor, changedSince) {
   return new Promise((ff, rj)=>{
@@ -104,7 +189,8 @@ function pipelinesReader(body){
 function jobsToPipelines(jobs){
   return jobs.map(job=>{
     return {
-      "id": job.name,
+      "source_id": job.name,
+      "source": "jenkins",
       "name": job.name,
       "description": job.description,
       "created_timestamp": job.created_timestamp,
@@ -213,17 +299,3 @@ function findValue(json,key){
   }
   return result;
 }
-
-// getPipelines
-// url/api/json?tree=jobs[url]
-
-// getPipeline
-// url/job/<JOB NAME>/api/json?tree=name,description,url
-// url/job/<JOB NAME>/config.xml
-
-// getBuilds
-// url/job/<JOB NAME>/api/json?tree=builds[id,url,duration,timestamp,number,result]
-// url/job/<JOB NAME>/api/json?tree=allBuilds[id,url,duration,timestamp,number,result]
-
-// getBuild: steps, artifacts, culprits ...
-// url/job/<JOB NAME>/<JOB NUMBER>/api/json

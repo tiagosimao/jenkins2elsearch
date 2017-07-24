@@ -122,7 +122,8 @@ function putMapping(index) {
       "type": "doc",
       "body": {
         "properties": {
-          "id": { "type": "text" }
+          "id": { "type": "text" },
+          "source_id": { "type": "text" }
         }
       }
     },(err,ok)=>{

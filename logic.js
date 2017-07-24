@@ -4,7 +4,8 @@ const methodMapping = {
   "write": [undefined, "write", undefined],
   "syncRepo": ["repo", "getRepos", "syncCommit"],
   "syncCommit": ["commit", "getCommits", undefined],
-  "syncPipeline": ["pipeline", "getPipelines", undefined],
+  "syncPipeline": ["pipeline", "getPipelines", "syncBuild"],
+  "syncBuild": ["build", "getBuilds", undefined]
 };
 
 function run(driver, job){
@@ -46,16 +47,22 @@ function runJob(driver, job, type, driverMethod, cascadeMethod){
             }
             if(got.data){
               got.data.forEach(o=>{
-                o.type=type;
-                nextJobs.onDestination.push({
-                  "method": "write",
-                  "input": o
-                });
-                if(cascadeMethod){
-                  nextJobs.onDriver.push({
-                    "method": cascadeMethod,
+                if(validItem(o)){
+                  o.source_id=''+o.source_id;
+                  o.id = o.source_id + '-' + o.source;
+                  o.type=type;
+                  nextJobs.onDestination.push({
+                    "method": "write",
                     "input": o
                   });
+                  if(cascadeMethod){
+                    nextJobs.onDriver.push({
+                      "method": cascadeMethod,
+                      "input": o
+                    });
+                  }
+                } else {
+                  console.error("Invalid item: " + JSON.stringify(o));
                 }
               });
             }
@@ -69,4 +76,8 @@ function runJob(driver, job, type, driverMethod, cascadeMethod){
       ff(nextJobs);
     }
   });
+}
+
+function validItem(i){
+  return (i&&!i.id&&i.source&&i.source_id) ? i : undefined;
 }

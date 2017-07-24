@@ -106,8 +106,8 @@ function transformRepos(gitLabRepos) {
   const result = [];
   for(let project of gitLabRepos) {
     let data = {
-      "id": "gitlab-" + project.id,
-      "gitlabProjectId": + project.id,
+      "source_id": project.id,
+      "source": "gitlab",
       "repoName": project.name,
       "repoUrl": project.ssh_url_to_repo,
       "description": project.description,
@@ -123,7 +123,7 @@ function transformRepos(gitLabRepos) {
 
 function getNextCommits(cursor,repo,ff,rj) {
   get(
-    "projects/"+repo.gitlabProjectId+"/repository/commits",
+    "projects/"+repo.source_id+"/repository/commits",
     cursor,
     repo,
     (commitList,cursor)=>{
@@ -140,7 +140,8 @@ function transformCommits(repo,gitLabCommits) {
   const result = [];
   for(let commit of gitLabCommits) {
     let data = {
-      "id": repo.repoName + "-" + commit.id,
+      "source_id": commit.id,
+      "source": "gitlab",
       "repoName": repo.repoName,
       "repoUrl": repo.repoUrl,
       "user": commit.author_email,
