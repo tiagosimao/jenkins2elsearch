@@ -9,7 +9,6 @@ module.exports.getPipelines = (fromCursor, changedSince)=>{
 
 const request = require('request');
 const XML = require('xml2js');
-const path = require("object-path");
 
 let jenkinsBaseUrl;
 

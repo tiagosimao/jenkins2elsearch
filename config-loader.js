@@ -27,12 +27,12 @@ function loadFromConfig(config) {
       rj("Invalid configuration");
     } else {
       const p = [
-        mondego.loadDestinationDriver(config.destinationDriver.module,config.destinationDriver.settings),
-        mondego.loadStateDriver(config.stateDriver.module,config.stateDriver.settings)
+        mondego.loadDestinationDriver(config.destinationDriver),
+        mondego.loadStateDriver(config.stateDriver)
       ];
       for(let i=0;i<config.sourceDrivers.length;++i){
         const driverConf = config.sourceDrivers[i];
-        p.push(mondego.loadSourceDriver(driverConf.id,driverConf.module,driverConf.settings));
+        p.push(mondego.loadSourceDriver(driverConf));
       }
       Promise.all(p).then(ok=>ff(mondego),ko=>rj(ko));
     }

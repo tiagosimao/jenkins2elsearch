@@ -1,17 +1,17 @@
 const configLoader = require('./config-loader');
-const dataSyncer = require('./data-syncer');
+const dataSyncer = require('./worker');
 const uuidv4 = require('uuid/v4');
 
-module.exports.loadSourceDriver = (id,modulePath,settings)=>{
-  return loadDriver("source-driver:" + id, modulePath, settings);
+module.exports.loadSourceDriver = (config)=>{
+  return loadDriver("source-driver:" + config.id, config.module, config.workers, config.settings);
 };
 
-module.exports.loadDestinationDriver = (modulePath, settings)=>{
-  return loadDriver("destination-driver", modulePath, settings);
+module.exports.loadDestinationDriver = (config)=>{
+  return loadDriver("destination-driver", config.module, config.workers, config.settings);
 };
 
-module.exports.loadStateDriver = (modulePath, settings)=>{
-  return loadDriver("state-driver", modulePath, settings);
+module.exports.loadStateDriver = (config)=>{
+  return loadDriver("state-driver", config.module, config.workers, config.settings);
 };
 
 module.exports.boot = () => {
@@ -199,7 +199,7 @@ function forEachDriver(consumer){
   mondego.drivers.forEach((driver)=>consumer(driver));
 }
 
-function loadDriver(id, modulePath, settings){
+function loadDriver(id, modulePath, workers, settings){
   return new Promise((ff,rj)=>{
     try {
       delete require.cache[require.resolve(modulePath)]
@@ -207,6 +207,7 @@ function loadDriver(id, modulePath, settings){
       mondego.drivers.push({
         "id": id,
         "module": code,
+        "workers": workers,
         "settings": settings
       });
       ff(mondego);
@@ -241,7 +242,7 @@ let reportI = 0;
 function report(){
   setTimeout(()=>{
     reportI = (reportI + 1)%4;
-    process.stdout.write('\x1B[2J\x1B[0f');
+  //  process.stdout.write('\x1B[2J\x1B[0f');
 
     console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
     console.log(" " + progress[reportI] + "\tdriver\t\t\t\t\t\t\t\trunning\tpending\tran\terrored\tretried");

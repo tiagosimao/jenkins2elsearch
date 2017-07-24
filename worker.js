@@ -1,4 +1,4 @@
-const jobRunner = require('./job-runner');
+const jobRunner = require('./logic');
 
 const no_delay = 0;
 const long_delay = 1000;
@@ -7,7 +7,12 @@ let stop;
 
 module.exports.sync = function(mondego){
     return new Promise((ff,rj)=>{
-      mondego.forEachDriver(driver=>fireConsumer(mondego,driver,no_delay));
+      mondego.forEachDriver(driver=>{
+        const workers = driver.workers ? driver.workers : 1;
+        for(let i=0;i<workers;++i){
+          fireConsumer(mondego,driver,no_delay);
+        }
+      });
       mondego.loadState();
     });
 };

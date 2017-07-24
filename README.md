@@ -28,6 +28,7 @@ Development support systems to Elasticsearch data migration
     {
       "id": "gitlab-v4",
       "module": "./drivers/gitlab-v4",
+      "workers": 4,
       "settings": {
         "url": "https://somewhere/api/v3",
         "username": "bigus_dicus",
@@ -37,6 +38,7 @@ Development support systems to Elasticsearch data migration
     {
       "id": "jenkins-v2",
       "module": "./drivers/jenkins-v2",
+      "workers": 1,
       "settings": {
         "url": "https://bigus_dicus:hunter2@somewhere/jenkins"
       }
@@ -44,6 +46,7 @@ Development support systems to Elasticsearch data migration
     {
       "id": "jenkins-promoted-builds-v2",
       "module": "./drivers/jenkins-promoted-builds-v2",
+      "workers": 1,
       "settings": {
         "url": "https://bigus_dicus:hunter2@somewhere/jenkins"
       }
