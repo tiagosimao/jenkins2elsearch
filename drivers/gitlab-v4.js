@@ -129,7 +129,7 @@ function getNextCommits(cursor,repo,ff,rj) {
     (commitList,cursor)=>{
       return {
       "data": transformCommits(repo,commitList),
-      "cursor": undefined //cursor
+      "cursor": cursor
       }
     },
     ff,

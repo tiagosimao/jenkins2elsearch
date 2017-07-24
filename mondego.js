@@ -241,14 +241,8 @@ let reportI = 0;
 function report(){
   setTimeout(()=>{
     reportI = (reportI + 1)%4;
-    //process.stdout.write('\x1B[2J\x1B[0f');
+    process.stdout.write('\x1B[2J\x1B[0f');
 
- /*console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
-    console.log("STATE")
-    console.log(mondego.state)
-    console.log("SAVE")
-    console.log(resumeState)
-*/
     console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
     console.log(" " + progress[reportI] + "\tdriver\t\t\t\t\t\t\t\trunning\tpending\tran\terrored\tretried");
     mondego.drivers.forEach((driver)=>{
@@ -262,21 +256,6 @@ function report(){
         driver.id+new Array(64-driver.id.length).join(" ");
       console.log("\t" + name + "\t" + running.length + "\t" + pending.length + "\t" + ran.length+ "\t" + errored.length+ "\t" + retried.length);
 
-/*
-      const agg = {};
-      pending.reduce((cus,j)=>{
-        const cursor = j.cursor;
-        if(cursor){
-          cus[cursor] = cus[cursor] ? cus[cursor] + 1 : 1;
-        } else {
-          cus['none'] = cus['none'] ? cus['none'] + 1 : 1;
-        }
-        return cus;
-      },agg);
-      Object.keys(agg).forEach(k=>{
-        console.log(k + ": " + agg[k]);
-      });
-*/
     });
     report();
   },1000);
