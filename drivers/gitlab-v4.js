@@ -114,7 +114,7 @@ function transformRepos(gitLabRepos) {
       "archived": project.archived,
       "created_timestamp": project.created_at,
       "activity_timestamp": project.last_activity_at,
-      "size": project.statistics.storage_size
+      "size": project.statistics ? project.statistics.storage_size : undefined
     };
     result.push(data);
   }
@@ -129,7 +129,7 @@ function getNextCommits(cursor,repo,ff,rj) {
     (commitList,cursor)=>{
       return {
       "data": transformCommits(repo,commitList),
-      "cursor": cursor
+      "cursor": undefined //cursor
       }
     },
     ff,

@@ -3,15 +3,15 @@ const dataSyncer = require('./data-syncer');
 const uuidv4 = require('uuid/v4');
 
 module.exports.loadSourceDriver = (id,modulePath,settings)=>{
-  return loadDriver("source-driver:" + id, "source-driver:" + id, modulePath, settings);
+  return loadDriver("source-driver:" + id, modulePath, settings);
 };
 
 module.exports.loadDestinationDriver = (modulePath, settings)=>{
-  return loadDriver("destination-driver", "destination-driver@" + modulePath, modulePath, settings);
+  return loadDriver("destination-driver", modulePath, settings);
 };
 
 module.exports.loadStateDriver = (modulePath, settings)=>{
-  return loadDriver("state-driver", "state-driver@" + modulePath, modulePath, settings);
+  return loadDriver("state-driver", modulePath, settings);
 };
 
 module.exports.boot = () => {
@@ -30,9 +30,16 @@ const mondego = {
   drivers: [],
   state: {
     pending: {},
-    running: {}
+    running: {},
+    ran: {},
+    errored: {},
+    retried: {}
   }
 };
+
+const resumeState = {
+  pending: {}
+}
 
 const repoBootstrap = {
   "method": "syncRepo"
@@ -47,15 +54,13 @@ function loadState(){
       driver.module.getState().then(
         state=>{
           mondego.drivers.forEach(driver=>{
-            let jobs = [];
             if(state.pending && state.pending[driver.id]){
-              jobs = jobs.concat(state.pending[driver.id]);
+              const jobs = state.pending[driver.id];
+              console.log("Loading previous state on driver " + driver.id + ": " + jobs.length + " jobs");
+              jobs.forEach(job=>{
+                queueJob(driver.id,job);
+              });
             }
-            if(state.running && state.running[driver.id]){
-              jobs = jobs.concat(state.running[driver.id]);
-            }
-            console.log("Loading previous state on driver " + driver.name + ": " + jobs.length + " jobs");
-            mondego.state.pending[driver.id]=jobs;
           });
         },
         nothin=>{
@@ -71,34 +76,86 @@ function loadState(){
 function saveState(){
   mondego.drivers.forEach(driver=>{
     if(driver.id=="state-driver"){
-      driver.module.setState(mondego.state);
+      driver.module.setState(resumeState);
     }
   });
 }
 
+function validateJob(job){
+  if(job&&job.id&&job.method){
+    return job;
+  }
+  console.trace("Invalid job: " + JSON.stringify(job));
+  return undefined;
+}
+
+function getJobIndex(queue,job){
+  if(!queue||!job){
+    return -1;
+  }
+  for(let i=0;i<queue.length;++i){
+    if(queue[i].id==job.id){
+      return i;
+    }
+  }
+  return -1;
+}
+
+function addJob(state,queue,driverId,job){
+  if(!state[queue]){
+    state[queue]=[];
+  }
+  if(!state[queue][driverId]){
+    state[queue][driverId]=[];
+  }
+  state[queue][driverId].push(job);
+}
+
+function moveJob(state,from,to,driverId,job){
+  const queue = state[from] ? state[from][driverId] : undefined;
+  if(!job){
+    job = queue ? queue.shift() : undefined;
+  } else {
+    const at = getJobIndex(queue,job);
+    if(at>-1){
+      queue.splice(at,1);
+    } else {
+      job=undefined;
+    }
+  }
+  if(job && to){
+    addJob(state,to,driverId,job);
+  }
+  return job;
+}
+
 function queueJob(driverId,job) {
-  if(job){
+  if(!job.id){
     job.id=uuidv4();
+  }
+  const validJob = validateJob(job);
+  if(validJob){
     forEachDriver((driver)=>{
       if(driver.id==driverId || driver.id.match(driverId)){
-        if(!mondego.state.pending[driver.id]){
-          mondego.state.pending[driver.id]=[];
+        const at = getJobIndex(mondego.state.pending[driver.id],validJob);
+        if(at>-1){
+          console.error("Job already queued");
+        } else {
+
+          addJob(mondego.state,"pending",driver.id,validJob);
+          addJob(resumeState,"pending",driver.id,validJob);
         }
-        mondego.state.pending[driver.id].push(job);
       }
     });
+  } else {
+    console.error("Invalid job submission: " + JSON.stringify(job));
   }
 }
 
 function pickupJob(driverId) {
   return new Promise((ff,rj)=>{
-    const queue = mondego.state.pending[driverId];
-    const job = queue ? queue.shift() : undefined;
+    const job = moveJob(mondego.state,"pending","running",driverId,undefined);
     if(job) {
-      if(!mondego.state.running[driverId]){
-        mondego.state.running[driverId]=[];
-      }
-      mondego.state.running[driverId].push(job);
       ff(job);
     } else {
       rj();
@@ -108,18 +165,13 @@ function pickupJob(driverId) {
 
 function resolveJob(driverId,job) {
   return new Promise((ff,rj)=>{
-    const queue = mondego.state.running[driverId];
-    const at = getJobIndex(queue,job);
-    if(at>-1){
-      mondego.state.running[driverId].splice(at,1);
+    const got = moveJob(mondego.state,"running","ran",driverId,job);
+    if(resumeState.pending[driverId].length>1){
+      // not removing last job forces mondego to pick up from there on re-run
+      moveJob(resumeState,"pending",undefined,driverId,job);
+    }
+    if(got){
       ff();
-      if(!driverId=="state-driver"){
-        queueJob("state-driver",{
-          "type":"saveState",
-          "cursor": undefined,
-          "input": mondego.state
-        });
-      }
     } else {
       rj("No such job was running on driver " + driverId + ": " + JSON.stringify(job));
     }
@@ -128,12 +180,14 @@ function resolveJob(driverId,job) {
 
 function rejectJob(driverId,job) {
   return new Promise((ff,rj)=>{
-    const queue = mondego.state.running[driverId];
-    const at = getJobIndex(queue,job);
-    if(at>-1){
-      mondego.state.running[driverId].splice(at,1);
-      job.errorCount = job.errorCount ? (job.errorCount+1) : 1;
-      queueJob(driverId,job);
+    const got = moveJob(mondego.state,"running","pending",driverId,job);
+    if(got){
+      if(got.errorCount&&got.errorCount>0){
+        addJob(mondego.state,"retried",driverId,job);
+      } else {
+        addJob(mondego.state,"errored",driverId,job);
+      }
+      got.errorCount = got.errorCount ? (got.errorCount+1) : 1;
       ff();
     } else {
       rj("No such job was running on driver " + driverId + ": " + JSON.stringify(job));
@@ -141,33 +195,23 @@ function rejectJob(driverId,job) {
   });
 }
 
-function getJobIndex(queue,job){
-  for(let i=0;i<queue.length;++i){
-    if(queue[i].id==job.id){
-      return i;
-    }
-  }
-  return -1;
-}
-
 function forEachDriver(consumer){
   mondego.drivers.forEach((driver)=>consumer(driver));
 }
 
-function loadDriver(id, name, modulePath, settings){
+function loadDriver(id, modulePath, settings){
   return new Promise((ff,rj)=>{
     try {
       delete require.cache[require.resolve(modulePath)]
       const code = require(modulePath);
       mondego.drivers.push({
         "id": id,
-        "name": name,
         "module": code,
         "settings": settings
       });
       ff(mondego);
     } catch(e){
-      console.error("Error loading driver " + name + " with ID " + id + " at " + modulePath + ": " + e);
+      console.error("Error loading driver " + id + " at " + modulePath + ": " + e);
       rj();
     }
   });
@@ -177,15 +221,15 @@ function bootAll(){
   return new Promise((ff,rj)=>{
     const pees = mondego.drivers.filter((driver)=>{
       if(!driver.module.setup){
-        console.warn("Warning: no setup method found for driver at " + driver.name);
+        console.warn("Warning: no setup method found for driver " + driver.id);
       }
       return driver.module.setup;
     })
     .map((driver)=>{
       const p = driver.module.setup(driver.settings);
       p.then(
-        ok=>console.log("Driver boot completed [" + driver.name + "]: " + ok),
-        ko=>console.error("Driver boot error [" + driver.name + "]: " + ko)
+        ok=>console.log("Driver boot completed [" + driver.id + "]: " + ok),
+        ko=>console.error("Driver boot error [" + driver.id + "]: " + ko)
       );
     })
     Promise.all(pees).then(ok=>ff(mondego),ko=>rj(ko));
@@ -198,15 +242,41 @@ function report(){
   setTimeout(()=>{
     reportI = (reportI + 1)%4;
     //process.stdout.write('\x1B[2J\x1B[0f');
+
+ /*console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
+    console.log("STATE")
+    console.log(mondego.state)
+    console.log("SAVE")
+    console.log(resumeState)
+*/
     console.log("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -");
-    console.log(" " + progress[reportI] + "\tdriver\t\t\t\t\t\t\t\trunning\tpending");
+    console.log(" " + progress[reportI] + "\tdriver\t\t\t\t\t\t\t\trunning\tpending\tran\terrored\tretried");
     mondego.drivers.forEach((driver)=>{
       const pending = mondego.state.pending[driver.id] ? mondego.state.pending[driver.id] : [];
       const running = mondego.state.running[driver.id] ? mondego.state.running[driver.id] : [];
-      let name = driver.name.length > 64 ?
-        driver.name.substring(0,64) :
-        driver.name+new Array(64-driver.name.length).join(" ");
-      console.log("\t" + name + "\t" + running.length + "\t" + pending.length);
+      const ran = mondego.state.ran[driver.id] ? mondego.state.ran[driver.id] : [];
+      const errored = mondego.state.errored[driver.id] ? mondego.state.errored[driver.id] : [];
+      const retried = mondego.state.retried[driver.id] ? mondego.state.retried[driver.id] : [];
+      let name = driver.id.length > 64 ?
+        driver.id.substring(0,64) :
+        driver.id+new Array(64-driver.id.length).join(" ");
+      console.log("\t" + name + "\t" + running.length + "\t" + pending.length + "\t" + ran.length+ "\t" + errored.length+ "\t" + retried.length);
+
+/*
+      const agg = {};
+      pending.reduce((cus,j)=>{
+        const cursor = j.cursor;
+        if(cursor){
+          cus[cursor] = cus[cursor] ? cus[cursor] + 1 : 1;
+        } else {
+          cus['none'] = cus['none'] ? cus['none'] + 1 : 1;
+        }
+        return cus;
+      },agg);
+      Object.keys(agg).forEach(k=>{
+        console.log(k + ": " + agg[k]);
+      });
+*/
     });
     report();
   },1000);

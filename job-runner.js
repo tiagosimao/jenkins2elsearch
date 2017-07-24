@@ -21,7 +21,7 @@ function run(driver, job){
       } else if(!job){
         rj("Cannot run undefined job");
       } else {
-        rj("Cannot run job. No mapping for method " + job.method);
+        rj("Cannot run job. No mapping for method " + JSON.stringify(job));
       }
     }
   });
@@ -29,13 +29,13 @@ function run(driver, job){
 
 function runJob(driver, job, type, driverMethod, cascadeMethod){
   return new Promise((ff,rj)=>{
-    //console.log("Running job " + job.method + " on driver " + driver.name)
+    //console.log("Running job " + job.method + " on driver " + driver.id)
     const nextJobs = {
       "onDriver":[],
       "onDestination":[]
     };
     if(driver.module[driverMethod]){
-      //console.log("Calling " + driverMethod + " on driver " + driver.name);
+      //console.log("Calling " + driverMethod + " on driver " + driver.id);
       driver.module[driverMethod](job.cursor,job.input).then(
         got=>{
           if(got){

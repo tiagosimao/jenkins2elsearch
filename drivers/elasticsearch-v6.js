@@ -22,21 +22,9 @@ module.exports.getState = function(){
 };
 module.exports.setState = function(state){
   return new Promise((ff,rj)=>{
-    elclient.index({
-      "index": index,
-      "type": elType,
-      "id": stateId,
-      "body": state },
-      (err,ok)=>{
-        if(err){
-          console.error("Error writing to elasticsearch: " + err);
-          rj(err);
-        } else {
-          //console.log("Wrote on index=" + index + ", type=" + type);
-          ff(ok);
-        }
-      });
-    });
+    pendingSaveState=state;
+    saveState();
+  });
 };
 module.exports.write = function(cursor,input){
   return new Promise((ff,rj)=>{
@@ -98,6 +86,33 @@ function setup(settings,ff,rj) {
       });
     }
   });
+}
+
+let pendingSaveState;
+let lastSave = Date.now();
+let lastElapsed = 1000;
+
+function saveState(){
+  const start = Date.now();
+  if(start-lastSave>lastElapsed*10) {
+    lastSave=start;
+    //console.log("Last save was at " + lastSave + ", it's now " + start + ", more than " + (lastElapsed*10) + " has passed");
+    //console.log("actually saving state: " + JSON.stringify(pendingSaveState));
+    elclient.index({
+      "index": index,
+      "type": elType,
+      "id": stateId,
+      "body": pendingSaveState },
+      (err,ok)=>{
+        if(err){
+          console.error("Error writing to elasticsearch: " + err);
+        } else {
+          //console.log("Wrote on index=" + index + ", type=" + type);
+          lastElapsed=Date.now()-start;
+          //console.log("Last save state took " + lastElapsed)
+        }
+      });
+    }
 }
 
 function putMapping(index) {

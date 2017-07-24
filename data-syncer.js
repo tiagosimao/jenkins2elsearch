@@ -16,14 +16,14 @@ function fireConsumer(mondego,driver,delay){
   setTimeout(
     ()=>{
       if(stop){
-        console.log("Shutting down driver " + driver.name);
+        console.log("Shutting down driver " + driver.id);
         return;
       }
       mondego.pickupJob(driver.id).then(
         job=>{
           jobRunner.run(driver,job).then(
             nextJobs=>{
-              //console.info("Completed job " + job.method + " on driver " + driver.name);
+              //console.info("Completed job " + job.method + " on driver " + driver.id);
               if(nextJobs){
                 nextJobs.onDriver.forEach(j=>{
                   mondego.queueJob(driver.id,j);
@@ -37,7 +37,7 @@ function fireConsumer(mondego,driver,delay){
               fireConsumer(mondego,driver,no_delay);
             },
             ko=>{
-              console.error("Error running job " + job.method + " on driver " + driver.name + ": " + ko);
+              console.error("Error running job " + job.method + " on driver " + driver.id + ": " + ko);
               mondego.rejectJob(driver.id,job);
               fireConsumer(mondego,driver,long_delay);
             }
